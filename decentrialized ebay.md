@@ -306,3 +306,25 @@ ok,以上就是合约的全部内容
 
 ### 3.2 拍卖合约
 
+product结构体中还需增加
+
+```
+//把与竞价相关的信息加密为hash，并且作为key存储在map中
+          //竞价者-竞价信息
+          mapping(address => mapping(bytes32 => Bid )) bids;
+```
+
+补充与竞价相关的信息
+
+```
+ //竞拍
+
+     struct Bid {
+          address bidders;
+          uint productId;
+
+          uint value; //竞价
+          bool revealed; //是否揭示
+     }
+```
+
