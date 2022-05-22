@@ -55,11 +55,11 @@ contract EcommerceStore {
           ProductStatus status;
           ProductCondition condition;
 
-          //把与竞价相关的信息加密为hash，并且作为key存储在map中
-          //竞价者-竞价信息
-          mapping(address => mapping(bytes32 => Bid )) bids;
-
      }
+
+     //把与竞价相关的信息加密为hash，并且作为key存储在map中
+          //竞价者-竞价信息
+     mapping(address => mapping(bytes32 => Bid )) bids;
 
      //竞拍
 
@@ -67,7 +67,7 @@ contract EcommerceStore {
           address bidder;
           uint productId;
 
-          uint value; //竞价
+          uint value; //竞价，实际支付的价格
           bool revealed; //是否揭示
      }
 
@@ -87,9 +87,11 @@ contract EcommerceStore {
           require(_auctionStartTime < _auctionEndTime, "auction start time should be before auction end time");
           productIndex +=1;
 
+          //处理map
+          
+
           //填写商品信息
-          Product memory product = Product(productIndex, _name, _category, _imageLink, _descLink,
-          _auctionStartTime, _auctionEndTime, _startPrice, address(0), 0, 0, 0, ProductStatus.Available, ProductCondition(_productCondition), null);
+          Product memory product = Product(productIndex, _name, _category, _imageLink, _descLink,_auctionStartTime, _auctionEndTime, _startPrice, address(0), 0, 0, 0, ProductStatus.Available, ProductCondition(_productCondition));
 
           //添加商品到商店,msg.sender是商店的地址，productIndex是商品的编号
           stores[msg.sender][productIndex] = product;
@@ -115,17 +117,18 @@ contract EcommerceStore {
 
           //检查商品是否已经被拍卖
           //require 判断条件，相当于if，如果不满足条件，则抛出异常，后面的字符串是抛出异常的信息
-          require(now >= product.auctionStartTime, "auction has not started yet");
-          require(now <= product.auctionEndTime, "auction has ended");
+          require(block.timestamp >= product.auctionStartTime, "auction has not started yet");
+          require(block.timestamp <= product.auctionEndTime, "auction has ended");
 
           //msg是消息，msg.sender是消息发送者，msg.value是消息金额
           require(msg.value>product.startPrice,"bid should be greater than start price");
 
           //检查竞拍者是否已经竞拍过，防止重复竞拍
-          require(product.bids[msg.sender][_bid].bidder == 0,"you have already bid");
+          // require(product.bids[msg.sender][_bid].bidder == 0,"you have already bid");
+          require(bids[msg.sender][_bid].bidder == address(0x0),"you have already bid");
 
           //添加竞拍者和竞拍信息
-          product.bids[msg.sender][_bid]= Bid(msg.sender,_productId,msg.value,false);
+          bids[msg.sender][_bid]= Bid(msg.sender,_productId,msg.value,false);
 
           product.totalBids +=1;
 
@@ -133,18 +136,97 @@ contract EcommerceStore {
      }
 
      //揭示报价
-     function revealBid(uint _productId,string _amout,string _secret) public{
-          Product storage product = strores[productInStore[_productIdIn]][_productId];
-          require(now >= product.auctionEndTime, "reveal should be after auction ended");
-          bytes32 sealedBid = sha3(_amout,_secret);
-          Bid memory bidInfo = product.bids[msg.sender][sealedBid];
+     function revealBid(uint _productId,string memory _amount,string memory _secret) public {
+          Product storage product = stores[productIdInStore[_productId]][_productId];
+          require(block.timestamp >= product.auctionEndTime, "reveal should be after auction ended");
+
+          bytes32  sealedBid = keccak256(abi.encode(_amount,_secret));
+
+          Bid memory bidInfo = bids[msg.sender][sealedBid];
 
           //校验揭示信息
-          require(bidInfo.bidder >0, "bidder should be valid");
-          require(bidInfo.reveald == false, "bid should not be revealed");
+          require(bidInfo.bidder >address(0x0), "bidder should be valid");
+          require(bidInfo.revealed == false, "bid should not be revealed");
 
+          //退款变量
+          uint refund;
+          //把报价转换为uint
+          uint amount = stringToUint(_amount);
           
-     
+          //检查报价是否正确，如果实际支付的价格报价低于竞拍的价格，则退款
+          if (bidInfo.value < amount) {
+               refund = bidInfo.value;
+          } else {
+               //如果没人报价，则出价为最高价
+               if (address(product.highestBidder)==address(0x0)) {
+                    product.highestBid = amount;
+                    //次高价为起拍价
+                    product.secondHighestBid = product.startPrice;
+                    //如果支付价格比报价高，则退回高出的部分（其实就是让实际支付的金额=报价）
+                    refund = bidInfo.value- amount;
+               }else {
+                    if(amount > product.highestBid){
+                         //如果报价比最高价高，则报价变为最高价
+                         //第二高价变为最高价
+                         product.secondHighestBid = product.highestBid;
+
+                         // address payable product.highestBidder;
+                         //退回原来最高价出价者的钱
+                         payable(product.highestBidder).transfer(product.highestBid);
+
+                         //更新最高价
+                         product.highestBid = amount;
+
+                         //更新最高价的出价者
+                         product.highestBidder = msg.sender;
+
+                         //退回高出的部分
+                         refund = bidInfo.value - amount;
+
+                    }else if (amount > product.secondHighestBid) {
+                         //如果报价比次高价高，但是低于最高价，则竞价失败，退款
+                         product.secondHighestBid = amount;
+                         //返回钱
+                         refund = bidInfo.value;
+                         
+                    }else {
+                         //如果报价比次高价低，则竞价失败，退款
+                         refund = bidInfo.value;
+                    }      
+               }
+          }
+          
+          bids[msg.sender][sealedBid].revealed = true;
+
+          if (refund > 0) {
+               //退款
+               payable(msg.sender).transfer(refund);
+          }
      }
 
+     function stringToUint(string memory s) private pure  returns(uint) {
+          //把字符串转换为字节数组
+          bytes memory b = bytes(s);
+          //把字节数组转换为uint
+          uint result = 0;
+          for (uint i = 0; i < b.length; i++){
+               //类型不能直接运算，需要先强制转换
+               uint8 c = uint8(bytes(b)[i]);
+               if(c>=48 && c<=57){
+                    result = result*10 + c-48;
+               }
+          }
+          return result;
+     }
+
+     function hightestbidderInfo(uint _productId)public view returns(address,uint,uint){
+          Product memory product = stores[productIdInStore[_productId]][_productId];
+
+          return (product.highestBidder,product.highestBid,product.secondHighestBid);
+     }
+
+     function totalBids(uint _productId)public view returns(uint){
+          Product memory product = stores[productIdInStore[_productId]][_productId];
+          return product.totalBids;
+     }
 }
