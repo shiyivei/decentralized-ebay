@@ -17,4 +17,6 @@ window.addEventListener('load',function(){
      input.addEventListener('keyup',function(e){
           console.log(e.target.value)
      })
+     
 })
+
